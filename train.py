@@ -13,7 +13,13 @@ import random
 from git import Repo
 import os
 import copy
+import math
 
+import sys
+mdensenet_path = os.path.expanduser('~/repos/music-source-separation/source/models/')
+sys.path.append(mdensenet_path)
+
+import MMDenseNet as mdn
 
 tqdm.monitor_interval = 0
 
@@ -26,8 +32,12 @@ def train(args, unmix, device, train_sampler, optimizer):
         pbar.set_description("Training batch")
         x, y = x.to(device), y.to(device)
         optimizer.zero_grad()
+        if args.model_type == 'open-unmix':
+            Y = unmix.transform(y)
+        elif args.model_type == 'mdensenet':
+            x = unmix.mdensenet.transform(x)
+            Y = unmix.mdensenet.transform(y)
         Y_hat = unmix(x)
-        Y = unmix.transform(y)
         loss = torch.nn.functional.mse_loss(Y_hat, Y)
         loss.backward()
         optimizer.step()
@@ -35,14 +45,25 @@ def train(args, unmix, device, train_sampler, optimizer):
     return losses.avg
 
 
-def valid(args, unmix, device, valid_sampler):
+def valid(args, unmix, device, valid_sampler, sample_rate):
     losses = utils.AverageMeter()
     unmix.eval()
     with torch.no_grad():
         for x, y in valid_sampler:
             x, y = x.to(device), y.to(device)
-            Y_hat = unmix(x)
-            Y = unmix.transform(y)
+            if args.model_type == 'open-unmix':
+                Y = unmix.transform(y)
+                Y_hat = unmix(x)
+            elif args.model_type == 'mdensenet':
+                x = unmix.mdensenet.transform(x)
+                Y = unmix.mdensenet.transform(y)
+                num_frames = math.ceil((args.seq_dur * sample_rate - args.nfft) / args.nhop)
+                X = torch.split(x, num_frames, dim=3)
+                Y_hat = []
+                for i in range(len(X)):
+                    Y_hat.append(unmix(X[i]))
+                Y_hat = torch.cat(Y_hat, dim=3)
+
             loss = torch.nn.functional.mse_loss(Y_hat, Y)
             losses.update(loss.item(), Y.size(1))
         return losses.avg
@@ -129,6 +150,7 @@ def main():
                         help='set number of channels for model (1, 2)')
     parser.add_argument('--nb-workers', type=int, default=0,
                         help='Number of workers for dataloader.')
+    parser.add_argument('--model-type', type=str, help='The model type: open-unmix/mdensenet')
 
     # Misc Parameters
     parser.add_argument('--quiet', action='store_true', default=False,
@@ -172,22 +194,37 @@ def main():
         scaler_mean = None
         scaler_std = None
     else:
-        scaler_mean, scaler_std = get_statistics(args, train_dataset)
+        if os.path.isfile('mean.npy') and os.path.isfile('std.npy'):
+            scaler_mean = np.load('mean.npy')
+            scaler_std = np.load('std.npy')
+        else:
+            scaler_mean, scaler_std = get_statistics(args, train_dataset)
+            np.save('mean.npy', scaler_mean)
+            np.save('std.npy', scaler_std)
 
     max_bin = utils.bandwidth_to_max_bin(
         train_dataset.sample_rate, args.nfft, args.bandwidth
     )
 
-    unmix = model.OpenUnmix(
-        input_mean=scaler_mean,
-        input_scale=scaler_std,
-        nb_channels=args.nb_channels,
-        hidden_size=args.hidden_size,
-        n_fft=args.nfft,
-        n_hop=args.nhop,
-        max_bin=max_bin,
-        sample_rate=train_dataset.sample_rate
-    ).to(device)
+    if args.model_type == 'open-unmix':
+        unmix = model.OpenUnmix(
+            input_mean=scaler_mean,
+            input_scale=scaler_std,
+            nb_channels=args.nb_channels,
+            hidden_size=args.hidden_size,
+            n_fft=args.nfft,
+            n_hop=args.nhop,
+            max_bin=max_bin,
+            sample_rate=train_dataset.sample_rate
+        ).to(device)
+    elif args.model_type == 'mdensenet':
+        unmix = mdn.MDenseNet(growth_rate=12, block_config=(4, 4, 4), compression=.5,
+                              num_init_features=32, bn_size=2, drop_rate=0.1,
+                              efficient=True, final_growth_rate=4, num_final_layers=2,
+                              input_mean=scaler_mean, input_scale=scaler_std).to(device)
+    else:
+        print('Wrong model type was specified.')
+        exit(1)
 
     optimizer = torch.optim.Adam(
         unmix.parameters(),
@@ -239,7 +276,7 @@ def main():
         t.set_description("Training Epoch")
         end = time.time()
         train_loss = train(args, unmix, device, train_sampler, optimizer)
-        valid_loss = valid(args, unmix, device, valid_sampler)
+        valid_loss = valid(args, unmix, device, valid_sampler, train_dataset.sample_rate)
         scheduler.step(valid_loss)
         train_losses.append(train_loss)
         valid_losses.append(valid_loss)
