@@ -13,9 +13,16 @@ import warnings
 import tqdm
 from contextlib import redirect_stderr
 import io
+import os
+import sys
+import math
+mdensenet_path = os.path.expanduser('~/repos/music-source-separation/source/models/')
+sys.path.append(mdensenet_path)
+
+import MMDenseNet as mdn
 
 
-def load_model(target, model_name='umxhq', device='cpu'):
+def load_model(target, model_name='umxhq', device='cpu', model_type='mdensenet'):
     """
     target model path can be either <target>.pth, or <target>-sha256.pth
     (as used on torchub)
@@ -49,22 +56,28 @@ def load_model(target, model_name='umxhq', device='cpu'):
             map_location=device
         )
 
-        max_bin = utils.bandwidth_to_max_bin(
-            state['sample_rate'],
-            results['args']['nfft'],
-            results['args']['bandwidth']
-        )
+        if model_type == 'mdensenet':
+            unmix = mdn.MDenseNet(growth_rate=12, block_config=(4, 4, 4), compression=.5,
+                                  num_init_features=32, bn_size=2, drop_rate=0.1,
+                                  efficient=True, final_growth_rate=4, num_final_layers=2).to(device)
+            unmix.load_state_dict(state)
+            unmix.mdensenet.stft.center = True
+        elif model_type == 'open-unmix':
+            max_bin = utils.bandwidth_to_max_bin(
+                state['sample_rate'],
+                results['args']['nfft'],
+                results['args']['bandwidth']
+            )
+            unmix = model.OpenUnmix(
+                n_fft=results['args']['nfft'],
+                n_hop=results['args']['nhop'],
+                nb_channels=results['args']['nb_channels'],
+                hidden_size=results['args']['hidden_size'],
+                max_bin=max_bin
+            )
+            unmix.load_state_dict(state)
+            unmix.stft.center = True
 
-        unmix = model.OpenUnmix(
-            n_fft=results['args']['nfft'],
-            n_hop=results['args']['nhop'],
-            nb_channels=results['args']['nb_channels'],
-            hidden_size=results['args']['hidden_size'],
-            max_bin=max_bin
-        )
-
-        unmix.load_state_dict(state)
-        unmix.stft.center = True
         unmix.eval()
         unmix.to(device)
         return unmix
@@ -86,7 +99,8 @@ def separate(
     targets,
     model_name='umxhq',
     niter=1, softmask=False, alpha=1.0,
-    residual_model=False, device='cpu'
+    residual_model=False, device='cpu',
+    model_type='mdensenet'
 ):
     """
     Performing the separation on audio input
@@ -121,6 +135,9 @@ def separate(
         computes a residual target, for custom separation scenarios
         when not all targets are available, defaults to False
 
+    model_type: string
+        Which model to use: `open-unmix` or `mdensenet`
+
     device: str
         set torch device. Defaults to `cpu`.
 
@@ -140,9 +157,27 @@ def separate(
         unmix_target = load_model(
             target=target,
             model_name=model_name,
-            device=device
+            device=device,
+            model_type=model_type
         )
-        Vj = unmix_target(audio_torch).cpu().detach().numpy()
+        if model_type == 'mdensenet':
+            with torch.no_grad():
+                x = unmix_target.mdensenet.transform(audio_torch)
+                num_frames = math.ceil((3.0 * 44100 - 4096) / 1024)
+                X = torch.split(x, num_frames, dim=3)
+                Vj = []
+                for i in range(len(X)):
+                    Vj.append(unmix_target(X[i]))
+                Vj = torch.cat(Vj, dim=3).cpu().detach().numpy()
+            Vj = np.transpose(Vj, [3, 0, 1, 2])
+            n_fft = unmix_target.mdensenet.stft.n_fft
+            n_hop = unmix_target.mdensenet.stft.n_hop
+        elif model_type == 'open-unmix':
+            Vj = unmix_target(audio_torch).cpu().detach().numpy()
+            n_fft = unmix_target.stft.n_fft
+            n_hop = unmix_target.stft.n_hop
+
+
         if softmask:
             # only exponentiate the model if we use softmask
             Vj = Vj**alpha
@@ -152,7 +187,10 @@ def separate(
 
     V = np.transpose(np.array(V), (1, 3, 2, 0))
 
-    X = unmix_target.stft(audio_torch).detach().cpu().numpy()
+    if model_type == 'mdensenet':
+        X = unmix_target.mdensenet.stft(audio_torch).detach().cpu().numpy()
+    elif model_type == 'open-unmix':
+        X = unmix_target.stft(audio_torch).detach().cpu().numpy()
     # convert to complex numpy type
     X = X[..., 0] + X[..., 1]*1j
     X = X[0].transpose(2, 1, 0)
@@ -169,8 +207,8 @@ def separate(
     for j, name in enumerate(source_names):
         audio_hat = istft(
             Y[..., j].T,
-            n_fft=unmix_target.stft.n_fft,
-            n_hopsize=unmix_target.stft.n_hop
+            n_fft=n_fft,
+            n_hopsize=n_hop
         )
         estimates[name] = audio_hat.T
 
