@@ -144,7 +144,15 @@ if __name__ == '__main__':
 
     else:
         results = museval.EvalStore()
-        for track in tqdm.tqdm(mus.tracks):
+        i = 0
+        k = 0
+        num_ignored = 0
+        for track in tqdm.tqdm(mus.tracks[30:]):
+            print(f'track: {track.name}, duration: {track.duration / 60}')
+            if track.duration / 60 > 5.7:
+                num_ignored += 1
+                continue  # ignore song because it is too large to compute evaluation.
+            i += 1
             scores = separate_and_evaluate(
                 track,
                 targets=args.targets,
@@ -157,8 +165,17 @@ if __name__ == '__main__':
                 device=device
             )
             results.add_track(scores)
+            if i % 15 == 0:
+                print(results)
+                method = museval.MethodStore()
+                method.add_evalstore(results, args.model)
+                k += 1
+                method.save(args.model + f'_part_{k}_' + '.pandas')
+                results = museval.EvalStore()
 
     print(results)
     method = museval.MethodStore()
     method.add_evalstore(results, args.model)
-    method.save(args.model + '.pandas')
+    k += 1
+    method.save(args.model + f'_part_{k}_' + '.pandas')
+    print(f'# ignored songs: {num_ignored}')

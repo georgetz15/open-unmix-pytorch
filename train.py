@@ -20,6 +20,7 @@ mdensenet_path = os.path.expanduser('~/repos/music-source-separation/source/mode
 sys.path.append(mdensenet_path)
 
 import MMDenseNet as mdn
+import online_is_nmf as onmf
 
 tqdm.monitor_interval = 0
 
