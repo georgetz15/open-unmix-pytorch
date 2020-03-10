@@ -38,6 +38,8 @@ def train(args, unmix, device, train_sampler, optimizer):
         elif args.model_type == 'mdensenet':
             x = unmix.mdensenet.transform(x)
             Y = unmix.mdensenet.transform(y)
+            x = x[:, :, :unmix.max_bin, :]
+            Y = Y[:, :, :unmix.max_bin, :]
         Y_hat = unmix(x)
         loss = torch.nn.functional.mse_loss(Y_hat, Y)
         loss.backward()
@@ -58,6 +60,8 @@ def valid(args, unmix, device, valid_sampler, sample_rate):
             elif args.model_type == 'mdensenet':
                 x = unmix.mdensenet.transform(x)
                 Y = unmix.mdensenet.transform(y)
+                x = x[:, :, :unmix.max_bin, :]
+                Y = Y[:, :, :unmix.max_bin, :]
                 num_frames = math.ceil((args.seq_dur * sample_rate - args.nfft) / args.nhop)
                 X = torch.split(x, num_frames, dim=3)
                 Y_hat = []
@@ -132,6 +136,8 @@ def main():
                         help='weight decay')
     parser.add_argument('--seed', type=int, default=42, metavar='S',
                         help='random seed (default: 42)')
+    parser.add_argument('--mdensenet-params', type=str,
+                        help='mdensenet model params')
 
     # Model Parameters
     parser.add_argument('--seq-dur', type=float, default=6.0,
@@ -219,10 +225,20 @@ def main():
             sample_rate=train_dataset.sample_rate
         ).to(device)
     elif args.model_type == 'mdensenet':
-        unmix = mdn.MDenseNet(growth_rate=12, block_config=(4, 4, 4), compression=.5,
-                              num_init_features=32, bn_size=2, drop_rate=0.1,
-                              efficient=True, final_growth_rate=4, num_final_layers=2,
-                              input_mean=scaler_mean, input_scale=scaler_std).to(device)
+        if args.mdensenet_params:
+            mdensenet_params = Path(args.mdensenet_params).expanduser()
+            with open(mdensenet_params, 'r') as stream:
+                model_params = json.load(stream)
+        unmix = mdn.MDenseNet(growth_rate=model_params['growth_rate'],
+                              block_config=model_params['block_config'],
+                              compression=model_params['compression'],
+                              num_init_features=model_params['num_init_features'],
+                              bn_size=model_params['bn_size'],
+                              drop_rate=model_params['drop_rate'],
+                              efficient=model_params['efficient'],
+                              final_growth_rate=model_params['final_growth_rate'],
+                              num_final_layers=model_params['num_final_layers'],
+                              input_mean=scaler_mean, input_scale=scaler_std, max_bin=max_bin).to(device)
     else:
         print('Wrong model type was specified.')
         exit(1)
