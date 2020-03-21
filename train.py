@@ -38,8 +38,8 @@ def train(args, unmix, device, train_sampler, optimizer):
         elif args.model_type == 'mdensenet':
             x = unmix.mdensenet.transform(x)
             Y = unmix.mdensenet.transform(y)
-            x = x[:, :, :unmix.max_bin, :]
-            Y = Y[:, :, :unmix.max_bin, :]
+            x = x[:, :, :unmix.mdensenet.nb_bins, :]
+            Y = Y[:, :, :unmix.mdensenet.nb_bins, :]
         Y_hat = unmix(x)
         loss = torch.nn.functional.mse_loss(Y_hat, Y)
         loss.backward()
@@ -60,8 +60,8 @@ def valid(args, unmix, device, valid_sampler, sample_rate):
             elif args.model_type == 'mdensenet':
                 x = unmix.mdensenet.transform(x)
                 Y = unmix.mdensenet.transform(y)
-                x = x[:, :, :unmix.max_bin, :]
-                Y = Y[:, :, :unmix.max_bin, :]
+                x = x[:, :, :unmix.mdensenet.nb_bins, :]
+                Y = Y[:, :, :unmix.mdensenet.nb_bins, :]
                 num_frames = math.ceil((args.seq_dur * sample_rate - args.nfft) / args.nhop)
                 X = torch.split(x, num_frames, dim=3)
                 Y_hat = []
@@ -319,6 +319,8 @@ def main():
             target=args.target
         )
 
+        train_times.append(time.time() - end)
+
         # save params
         params = {
             'epochs_trained': epoch,
@@ -334,8 +336,6 @@ def main():
 
         with open(Path(target_path,  args.target + '.json'), 'w') as outfile:
             outfile.write(json.dumps(params, indent=4, sort_keys=True))
-
-        train_times.append(time.time() - end)
 
         if stop:
             print("Apply Early Stopping")
