@@ -1,0 +1,46 @@
+{
+    "args": {
+        "bandwidth": 16000,
+        "batch_size": 1,
+        "dataset": "musdb",
+        "epochs": 1,
+        "hidden_size": 512,
+        "is_wav": false,
+        "lr": 0.001,
+        "lr_decay_gamma": 0.3,
+        "lr_decay_patience": 80,
+        "model": null,
+        "model_type": "ONMF",
+        "nb_channels": 2,
+        "nb_workers": 0,
+        "nfft": 4096,
+        "nhop": 1024,
+        "no_cuda": false,
+        "output": "ONMF",
+        "patience": 140,
+        "quiet": false,
+        "root": "~/Music/musdb18",
+        "samples_per_track": 64,
+        "seed": 42,
+        "seq_dur": 3.0,
+        "source_augmentations": [
+            "gain",
+            "channelswap"
+        ],
+        "target": "vocals",
+        "unidirectional": false,
+        "weight_decay": 1e-05
+    },
+    "best_epoch": 0,
+    "best_loss": NaN,
+    "commit": "3ff7302",
+    "epochs_trained": 1,
+    "num_bad_epochs": 0,
+    "train_loss_history": [
+        Infinity
+    ],
+    "train_time_history": [],
+    "valid_loss_history": [
+        NaN
+    ]
+}

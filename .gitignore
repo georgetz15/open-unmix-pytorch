@@ -4,7 +4,7 @@ data/
 OSU/
 .mypy_cache
 .vscode
-*.json
+#*.json
 *.wav
 *.mp3
 *.pth.tar
