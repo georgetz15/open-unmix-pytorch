@@ -16,11 +16,10 @@ import copy
 import math
 
 import sys
-mdensenet_path = os.path.expanduser('~/repos/music-source-separation/source/models/')
+mdensenet_path = os.path.expanduser('~/repos/mss-thesis/mdensenet/')
 sys.path.append(mdensenet_path)
 
-import MMDenseNet as mdn
-import online_is_nmf as onmf
+import mdensenet as mdn
 
 tqdm.monitor_interval = 0
 
@@ -243,10 +242,10 @@ def main():
         print('Wrong model type was specified.')
         exit(1)
 
-    optimizer = torch.optim.Adam(
+    optimizer = torch.optim.RMSprop(
         unmix.parameters(),
         lr=args.lr,
-        weight_decay=args.weight_decay
+        # weight_decay=args.weight_decay
     )
 
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
